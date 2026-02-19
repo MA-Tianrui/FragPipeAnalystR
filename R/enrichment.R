@@ -638,14 +638,12 @@ enrichr_mod <- function(genes, databases = NULL) {
 }
 
 #' @export
-prepare_PTMSEA <- function(se, col, outfile) {
-  if (metadata(se)$exp_type == "phospho") {
-    temp <- data.frame(as.data.frame(rowData(se))["SequenceWindow"], as.data.frame(rowData(se))[col])
-    colnames(temp) <- c("peptide", col)
-    temp <- temp[!is.na(temp[[col]]),]
-    gct <- new("GCT", mat=as.matrix(temp[,col, drop=F]), rid=paste0(make.unique(toupper(temp$peptide)), "-p"))
-    write_gct(gct, outfile, appenddim = F)
-  }
+prepare_PTMSEA <- function(se, score_col, id_col = "SequenceWindow", outfile) {
+  temp <- data.frame(as.data.frame(rowData(se))[id_col], as.data.frame(rowData(se))[score_col])
+  colnames(temp) <- c("peptide", score_col)
+  temp <- temp[!is.na(temp[[score_col]]),]
+  gct <- new("GCT", mat=as.matrix(temp[,score_col, drop=F]), rid=paste0(make.unique(toupper(temp$peptide)), "-p"))
+  write_gct(gct, outfile, appenddim = F)
 }
 
 write_gct <- function(ds, ofile, precision=4, appenddim=TRUE, ver=3) {
@@ -728,22 +726,33 @@ write_gct <- function(ds, ofile, precision=4, appenddim=TRUE, ver=3) {
 }
 
 #' @export
-visualize_PTMSEA <- function(gct_file, col, selected_concepts=NULL, num_concepts=5) {
+visualize_PTMSEA <- function(gct_file, score_col,
+                             selected_collections=c('PERT', 'PATH', 'KINASE', 'DISEASE'),
+                             selected_concepts=NULL,
+                             num_concepts=5,
+                             direction = "Both", fdr_pvalue_cutoff = 0.05, score_cutoff = 1) {
   gct <- parse_gctx(gct_file)
   score_cols <- colnames(mat(gct))
-  if (!col %in% score_cols) {
+  if (!score_col %in% score_cols) {
     return(NULL)
   }
   data <- cbind(meta(gct, dimension = "row"), mat(gct))
+  data <- data[grepl(paste0("^(", paste(selected_collections, collapse = "|"), ")"), data$id), ]
   if (is.null(selected_concepts)) {
-    data <- data[order(data[[col]], decreasing = T),]
+    data <- data[order(data[[score_col]]),]
     data <- data[c(c(1:num_concepts), (dim(data)[1] - num_concepts + 1):dim(data)[1]),]
   } else {
     data <- data[data$id %in% selected_concepts,]
-    data <- data[order(data[[col]], decreasing = F),]
+    data <- data[order(data[[score_col]], decreasing = F),]
   }
+  if (direction == 'Up') {
+    data <- data[data[[score_col]] > 0, ]
+  } else if (direction == 'Down') {
+    data <- data[data[[score_col]] < 0, ]
+  }
+  data <- data[abs(data[[score_col]]) >= score_cutoff & data[[paste('fdr.pvalue.', score_col, sep = '')]] <= fdr_pvalue_cutoff, ]
   data$id <- factor(data$id, levels=data$id)
-  p <- ggplot(data, aes_string(x = col, y = "id", color=paste0("fdr.pvalue.", col), size=paste0("Signature.set.overlap.percent.", col))) +
+  p <- ggplot(data, aes_string(x = score_col, y = "id", color=paste0("fdr.pvalue.", score_col), size=paste0("Signature.set.overlap.percent.", score_col))) +
     geom_point() +
     scale_size_continuous(range = c(0.5, 11), name="Overlap percentage") +
     scale_color_continuous(low="red", high="blue", name = "p.adjust",
